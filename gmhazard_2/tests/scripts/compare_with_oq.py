@@ -31,7 +31,6 @@ def gen_rx_ry_OQ_comparison_plots(
     n_scenarios: int = None,
     scenario_ids: List[int] = None,
     id: str = None,
-
 ):
     if n_scenarios is None and scenario_ids is None:
         raise ValueError("Either n_scenarios or scenario_ids must be specified")
@@ -69,7 +68,11 @@ def gen_rx_ry_OQ_comparison_plots(
     )
 
     # Process each scenario
-    scenario_ids = scenario_ids if scenario_ids is not None else rupture_scenarios_df.index.values[:n_scenarios]
+    scenario_ids = (
+        scenario_ids
+        if len(scenario_ids) > 0
+        else rupture_scenarios_df.index.values[:n_scenarios]
+    )
     for cur_scenario_id in scenario_ids:
         cur_section_ids = rupture_scenarios_df.loc[cur_scenario_id].section_ids
         cur_scenario_segment_mask = np.isin(segment_section_ids, cur_section_ids)

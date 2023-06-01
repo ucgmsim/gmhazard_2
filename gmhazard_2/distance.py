@@ -713,12 +713,16 @@ def compute_scenario_strike(
         shape: [n_segments]
     """
     # Make matrix of all unique trace points
-    unique_trace_points = np.unique(trace_points.transpose((0, 2, 1)).reshape((-1, 2)), axis=0)
+    unique_trace_points = np.unique(
+        trace_points.transpose((0, 2, 1)).reshape((-1, 2)), axis=0
+    )
 
     # Compute the distance matrix
     dist_matrix = np.zeros((unique_trace_points.shape[0], unique_trace_points.shape[0]))
     for i in range(unique_trace_points.shape[0]):
-        dist_matrix[i, :] = np.linalg.norm(unique_trace_points[i] - unique_trace_points, axis=1)
+        dist_matrix[i, :] = np.linalg.norm(
+            unique_trace_points[i] - unique_trace_points, axis=1
+        )
 
     # Find the trace point combination that has the maximum separation distance
     ix_1, ix_2 = np.unravel_index(dist_matrix.argmax(), dist_matrix.shape)
@@ -737,40 +741,50 @@ def compute_scenario_strike(
     # based on the equation for e_j in Spuch et al. (2015)
     # I.e. the vector from the origin to the end of the trace
     # Todo: Is there a better way to do this??
+    # Is it equivalent to compute the weighted strike vector (using segment length)?? No
     _, unique_ind = np.unique(segment_section_ids, return_index=True)
     section_strike_vecs = np.zeros((2, unique_ind.size))
     for i, ix in enumerate(unique_ind):
         cur_section_id = segment_section_ids[ix]
         m = segment_section_ids == cur_section_id
         # Compute the two possible strike vectors
-        v1 = trace_points[:, :, m][0, :, 0] - trace_points[:, :, m][1, :, -1]
-        v1 /= np.linalg.norm(v1)
-        v2 = trace_points[:, :, m][1, :, -1] - trace_points[:, :, m][0, :, 0]
-        v2 /= np.linalg.norm(v2)
+        v3 = trace_points[:, :, m][0, :, 0] - trace_points[:, :, m][1, :, -1]
+        v3 /= np.linalg.norm(v3)
+        v4 = trace_points[:, :, m][1, :, -1] - trace_points[:, :, m][0, :, 0]
+        v4 /= np.linalg.norm(v4)
 
         # Compute the average segment strike vector
-        avg_segment_strike_vec = (segment_strike_vecs[:, m] * segment_trace_length[m]).sum(axis=1)
+        avg_segment_strike_vec = (
+            segment_strike_vecs[:, m] * segment_trace_length[m]
+        ).sum(axis=1)
         avg_segment_strike_vec /= segment_trace_length[m].sum()
 
         # Choose the correct section strike vector
-        if np.dot(v1, avg_segment_strike_vec) > np.dot(v2, avg_segment_strike_vec):
-            section_strike_vecs[:, i] = v1
+        if np.dot(v3, avg_segment_strike_vec) > np.dot(v4, avg_segment_strike_vec):
+            section_strike_vecs[:, i] = v3
         else:
-            section_strike_vecs[:, i] = v2
+            section_strike_vecs[:, i] = v4
 
     # Compute e_j = strike_vec . a_hat
-    e_j = np.matmul(segment_strike_vecs.T, a_hat)
-    # e_j = np.einsum("ij,i->j", section_strike_vecs, a_hat)
+    # e_j = np.matmul(segment_strike_vecs.T, a_hat)
+    e_j = np.einsum("ij,i->j", section_strike_vecs, a_hat)
 
     # Compute E
     E = np.sum(e_j)
 
     # Switch any strike vectors with opposite sign to E
-    if np.any((segment_strike_flip_mask := np.sign(e_j) != np.sign(E))):
+    if np.any((section_strike_flip_mask := np.sign(e_j) != np.sign(E))):
+        segment_strike_flip_mask = np.isin(
+            segment_section_ids,
+            segment_section_ids[unique_ind[section_strike_flip_mask]],
+        )
+
         segment_strike_vecs = segment_strike_vecs.copy()
         segment_strike_vecs[:, segment_strike_flip_mask] = (
             -1.0 * segment_strike_vecs[:, segment_strike_flip_mask]
         )
+    else:
+        segment_strike_flip_mask = np.zeros(segment_section_ids.size, dtype=bool)
 
     # Compute nominal strike
     scenario_strike_vec = np.sum(segment_trace_length * segment_strike_vecs, axis=1)
@@ -792,27 +806,6 @@ def compute_scenario_strike(
         scenario_origin,
         segment_strike_flip_mask,
     )
-
-
-# def indef_integral_omega(u: float, A: np.ndarray, B: np.ndarray, S: np.ndarray):
-#     """
-#     Indefinite integral of segment weight function
-#     https://www.wolframalpha.com/input?i=integral+of+1%2F%28%28A1+%2B+u+*+B1+-+u+*+A1+-+S1%29%5E2+%2B+%28+A2+%2B+u+*+B2+-+u+*+A2+-+S2%29%5E2%29+wrt+u
-#     """
-#     denominator = (
-#         A[0] * (S[1] - B[1]) + A[1] * (B[0] - S[0]) - B[0] * S[1] + B[1] * S[0]
-#     )
-#     tan_numerator = (
-#         A[0] ** 2 * (u - 1.0)
-#         + A[0] * (-2 * B[0] * u + B[0] + S[0])
-#         + A[1] ** 2 * (u - 1.0)
-#         + A[1] * (-2 * B[1] * u + B[1] + S[1])
-#         + B[0] ** 2 * u
-#         - B[0] * S[0]
-#         + B[1] ** 2 * u
-#         - B[1] * S[1]
-#     )
-#     return np.arctan(tan_numerator / denominator) / denominator
 
 
 def compute_segment_weight(
@@ -868,7 +861,9 @@ def compute_scenario_rx_ry(
         _,
         scenario_origin,
         segment_strike_flip_mask,
-    ) = compute_scenario_strike(trace_points, segment_strike_vecs, segment_trace_length, segment_section_ids)
+    ) = compute_scenario_strike(
+        trace_points, segment_strike_vecs, segment_trace_length, segment_section_ids
+    )
 
     # Change sign of the Rx values corresponding to the segments
     # with a flipped strike
@@ -939,7 +934,6 @@ def compute_scenario_rx_ry(
         ]
 
     # Flip sign if strike was changed
-    # TODO: Also need to update the origin??!!
     segment_ry[segment_strike_flip_mask] = (
         -1 * segment_ry[segment_strike_flip_mask]
         + segment_trace_length[segment_strike_flip_mask]
