@@ -740,18 +740,14 @@ def compute_scenario_strike(
     # Compute the "strike" per section/fault trace
     # based on the equation for e_j in Spuch et al. (2015)
     # I.e. the vector from the origin to the end of the trace
-    # Todo: Is there a better way to do this??
-    # Is it equivalent to compute the weighted strike vector (using segment length)?? No
-    _, unique_ind = np.unique(segment_section_ids, return_index=True)
-    section_strike_vecs = np.zeros((2, unique_ind.size))
-    for i, ix in enumerate(unique_ind):
+    _, unique_section_id_ind = np.unique(segment_section_ids, return_index=True)
+    section_strike_vecs = np.zeros((2, unique_section_id_ind.size))
+    for i, ix in enumerate(unique_section_id_ind):
         cur_section_id = segment_section_ids[ix]
         m = segment_section_ids == cur_section_id
         # Compute the two possible strike vectors
         v3 = trace_points[:, :, m][0, :, 0] - trace_points[:, :, m][1, :, -1]
-        v3 /= np.linalg.norm(v3)
         v4 = trace_points[:, :, m][1, :, -1] - trace_points[:, :, m][0, :, 0]
-        v4 /= np.linalg.norm(v4)
 
         # Compute the average segment strike vector
         avg_segment_strike_vec = (
@@ -760,7 +756,9 @@ def compute_scenario_strike(
         avg_segment_strike_vec /= segment_trace_length[m].sum()
 
         # Choose the correct section strike vector
-        if np.dot(v3, avg_segment_strike_vec) > np.dot(v4, avg_segment_strike_vec):
+        if np.dot(v3 / np.linalg.norm(v3), avg_segment_strike_vec) > np.dot(v4 /
+            np.linalg.norm(v4), avg_segment_strike_vec
+        ):
             section_strike_vecs[:, i] = v3
         else:
             section_strike_vecs[:, i] = v4
@@ -774,20 +772,20 @@ def compute_scenario_strike(
 
     # Switch any strike vectors with opposite sign to E
     if np.any((section_strike_flip_mask := np.sign(e_j) != np.sign(E))):
-        segment_strike_flip_mask = np.isin(
-            segment_section_ids,
-            segment_section_ids[unique_ind[section_strike_flip_mask]],
-        )
-
-        segment_strike_vecs = segment_strike_vecs.copy()
-        segment_strike_vecs[:, segment_strike_flip_mask] = (
-            -1.0 * segment_strike_vecs[:, segment_strike_flip_mask]
-        )
+        section_strike_vecs[:, section_strike_flip_mask] = -1.0 * section_strike_vecs[
+            :, section_strike_flip_mask
+        ]
     else:
-        segment_strike_flip_mask = np.zeros(segment_section_ids.size, dtype=bool)
+        section_strike_flip_mask = np.zeros(section_strike_vecs.shape[-1], dtype=bool)
+
+    # The segments corresponding to the flipped section strike vectors
+    segment_strike_flip_mask = np.isin(
+            segment_section_ids,
+            segment_section_ids[unique_section_id_ind[section_strike_flip_mask]],
+        )
 
     # Compute nominal strike
-    scenario_strike_vec = np.sum(segment_trace_length * segment_strike_vecs, axis=1)
+    scenario_strike_vec = np.sum(section_strike_vecs, axis=1)
     scenario_strike = np.mod(
         np.degrees(np.arctan2(scenario_strike_vec[0], scenario_strike_vec[1])),
         360,
@@ -804,6 +802,7 @@ def compute_scenario_strike(
         scenario_strike_vec,
         scenario_strike,
         scenario_origin,
+        section_strike_flip_mask,
         segment_strike_flip_mask,
     )
 
@@ -860,6 +859,7 @@ def compute_scenario_rx_ry(
         scenario_strike_vec,
         _,
         scenario_origin,
+        section_strike_flip_mask,
         segment_strike_flip_mask,
     ) = compute_scenario_strike(
         trace_points, segment_strike_vecs, segment_trace_length, segment_section_ids
