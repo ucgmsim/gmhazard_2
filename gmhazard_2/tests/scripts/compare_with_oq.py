@@ -2,23 +2,18 @@ import time
 from pathlib import Path
 from typing import List
 
-import pandas as pd
-from pyproj import Transformer
 import numpy as np
 
 from gmhazard_2 import dbs
 from gmhazard_2 import distance
 from gmhazard_2 import plotting
 from gmhazard_2 import utils
-from qcore.geo import ll_bearing
 
 import matplotlib.pyplot as plt
 import typer
 
 from openquake.hazardlib.geo.multiline import MultiLine
-from openquake.hazardlib import geo
 from openquake.hazardlib.tests.geo.line_test import get_mesh
-from openquake.hazardlib import nrml, sourceconverter
 
 app = typer.Typer()
 
