@@ -1,4 +1,3 @@
-import time
 from pathlib import Path
 from typing import List
 
@@ -8,12 +7,10 @@ from gmhazard_2 import dbs
 from gmhazard_2 import distance
 from gmhazard_2 import plotting
 from gmhazard_2 import utils
+from gmhazard_2 import test_utils
 
 import matplotlib.pyplot as plt
 import typer
-
-from openquake.hazardlib.geo.multiline import MultiLine
-from openquake.hazardlib.tests.geo.line_test import get_mesh
 
 app = typer.Typer()
 
@@ -69,45 +66,25 @@ def gen_rx_ry_OQ_comparison_plots(
         else rupture_scenarios_df.index.values[:n_scenarios]
     )
     for cur_scenario_id in scenario_ids:
-        cur_section_ids = rupture_scenarios_df.loc[cur_scenario_id].section_ids
-        cur_scenario_segment_mask = np.isin(segment_section_ids, cur_section_ids)
-
-        cur_segment_coords = segment_coords[:, :, cur_scenario_segment_mask]
-
-        # Site mesh
-        mesh, plons, plats = get_mesh(
-            cur_segment_coords[:, 0, :].ravel().min() - 0.1,
-            cur_segment_coords[:, 0, :].ravel().max() + 0.1,
-            cur_segment_coords[:, 1, :].ravel().min() - 0.1,
-            cur_segment_coords[:, 1, :].ravel().max() + 0.1,
-            0.01,
+        tupp, uupp, scenario_Rx, scenario_Ry, plons, plats, cur_segment_coords = test_utils.process_rupture_scenario(
+            rupture_scenarios_df,
+            cur_scenario_id,
+            segment_coords,
+            segment_nztm_coords,
+            segment_section_ids,
+            lines,
         )
 
-        # Perform distance calculation
-        (
-            scenario_Rx,
-            scenario_Ry,
-            scenario_Rrup,
-            scenario_Rjb,
-        ) = utils.compute_mesh_distances(
-            segment_nztm_coords[:, :, cur_scenario_segment_mask],
-            plons,
-            plats,
-            cur_section_ids,
-            segment_section_ids[cur_scenario_segment_mask],
-            ll=True,
-        )
-
-        # Create the OQ MultiLine object
-        cur_lines = [lines[cur_id] for cur_id in cur_section_ids]
-        ml = MultiLine(cur_lines)
-        ml.set_tu(mesh)
-        uupp = ml.uut.reshape(plons.shape)
-        tupp = ml.tut.reshape(plons.shape)
-
-        # Plot the results
+        # Create current output dir
         (cur_output_dir := output_dir / str(cur_scenario_id)).mkdir(exist_ok=True)
 
+        # Write the results
+        np.save(str(cur_output_dir / "Rx_GMHazard.npy"), scenario_Rx)
+        np.save(str(cur_output_dir / "Ry_GMHazard.npy"), scenario_Ry)
+        np.save(str(cur_output_dir / "Rx_OQ.npy"), tupp)
+        np.save(str(cur_output_dir / "Ry_OQ.npy"), uupp)
+
+        # Plot the results
         # T
         max_abs_T = (
             np.floor(max(np.abs(scenario_Rx.min()), scenario_Rx.max()) / 10) * 10

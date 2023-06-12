@@ -10,6 +10,7 @@ from qcore.geo import ll_bearing
 from openquake.hazardlib import nrml, sourceconverter
 from openquake.hazardlib import geo
 
+
 def compute_scenario_mesh_distances(source_model_db_ffp: Path, scenario_id: int):
     """
     Computes the site-to-source distances for a
@@ -67,7 +68,15 @@ def compute_scenario_mesh_distances(source_model_db_ffp: Path, scenario_id: int)
         segment_nztm_coords, p_x, p_y, section_ids, segment_section_ids
     )
 
-    return segment_nztm_coords, p_x, p_y, scenario_Rx, scenario_Ry, scenario_Rrup, scenario_Rjb
+    return (
+        segment_nztm_coords,
+        p_x,
+        p_y,
+        scenario_Rx,
+        scenario_Ry,
+        scenario_Rrup,
+        scenario_Rjb,
+    )
 
 
 def compute_mesh_distances(
@@ -104,7 +113,7 @@ def compute_mesh_distances(
 
     # Compute distances for each site
     for i in range(p_x.shape[0]):
-        print(f"Processing row {i}/{p_x.shape[0]}")
+        # print(f"Processing row {i}/{p_x.shape[0]}")
         for j in range(p_x.shape[1]):
             # Get the current site coordinates
             if ll:
@@ -152,15 +161,27 @@ def compute_mesh_distances(
 
     return scenario_Rx, scenario_Ry, scenario_Rrup, scenario_Rjb
 
-def create_OQ_lines(section_ids: np.ndarray, rupture_section_pts_df: pd.DataFrame, rupture_sections_ffp: Path, set_id: int):
+
+def create_OQ_lines(
+    section_ids: np.ndarray,
+    rupture_section_pts_df: pd.DataFrame,
+    rupture_sections_ffp: Path,
+    set_id: int,
+):
     # Load the source file via OQ
     cv = sourceconverter.SourceConverter(rupture_mesh_spacing=4)
     sm = list(nrml.read_source_models([str(rupture_sections_ffp)], cv))[0]
 
+    # Create a nshm section id -> section id lookup
+    _, unique_ind = np.unique(rupture_section_pts_df.nshm_section_id, return_index=True)
+    section_id_lookup = pd.Series(
+        index=rupture_section_pts_df.nshm_section_id.iloc[unique_ind].values,
+        data=rupture_section_pts_df.section_id.iloc[unique_ind].values,
+    )
 
     # Get the OQ strike for each section
     oq_strike = {
-        int(k) + set_id * int(1e4): cur_section.get_strike()
+        section_id_lookup[k]: cur_section.get_strike()
         for k, cur_section in sm.sections.items()
     }
 

@@ -462,7 +462,7 @@ def site_to_nztm(site_coords: np.ndarray):
     return np.asarray([x, y, 0])
 
 
-def segment_to_nztm(segment_coords: np.ndarray):
+def segment_to_nztm(segment_coords: np.ndarray) -> np.ndarray:
     """
     Converts the segment corner coordinates
     from lon, lat, depth to NZTM, i.e. x, y, depth

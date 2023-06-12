@@ -176,18 +176,22 @@ class SourceModelDB:
                     # Get rupture scenarios parameters
                     (
                         mags,
-                        rupture_idxs,
+                        section_ids,
                         prob_occur,
                         rake,
                     ) = source_model.get_rupture_scenarios(
                         rupture_scenarios_db_ffp, cur_source_set_id_2
                     )
 
+                    # Create a nshm section id -> section id lookup
+                    _,unique_ind = np.unique(section_points_df.nshm_section_id, return_index=True)
+                    section_id_lookup = pd.Series(index=section_points_df.nshm_section_id.iloc[unique_ind].values,
+                                                  data=section_points_df.section_id.iloc[unique_ind].values)
+
                     # Convert rupture indices to section ids
                     scenario_section_ids = [
-                        np.fromiter(map(int, cur_ind.decode().split()), dtype=np.int)
-                        + (i * int(1e4))
-                        for cur_ind in rupture_idxs
+                        section_id_lookup.loc[cur_id.decode().split()].values
+                        for cur_id in section_ids
                     ]
 
                     # Combine into single df

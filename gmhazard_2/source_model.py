@@ -19,8 +19,8 @@ def parse_rupture_sections(rupture_sections_ffp: Path):
 
     doc = doc["nrml"]["geometryModel"]
     sections = {}
-    for section in doc["section"]:
-        id = int(section["@id"])
+    for i, section in enumerate(doc["section"]):
+        id = str(section["@id"])
         cur_positions = []
         for line_string in section["kiteSurface"]["profile"]:
             cur_positions.append(
@@ -46,9 +46,12 @@ def create_section_df(sections: Dict[int, np.ndarray]):
     given sections
     """
     dfs = []
-    for i, cur_coords in sections.items():
+    for i, (id, cur_coords) in enumerate(sections.items()):
         df = pd.DataFrame(data=cur_coords, columns=["lon", "lat", "depth"])
+        df["nshm_section_id"] = id
         df["section_ix"] = i
+        # df["section_id"] = id
+
 
         dfs.append(df)
 
