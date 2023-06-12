@@ -46,7 +46,7 @@ def compute_segment_area(segment_nztm_coords: np.ndarray):
     ) / 1e6
 
 
-@nb.njit
+@nb.njit(cache=True)
 def check_site_in_segment(
     segment_nztm_coords: np.ndarray,
     site_nztm_coords: np.ndarray,
@@ -79,7 +79,7 @@ def check_site_in_segment(
     index_combs = [(0, 1), (1, 3), (3, 2), (2, 0)]
     p_total_area = (
         np.sum(
-            np.asarray(
+            np.asarray( # This is needed for numba
                 [
                     0.5
                     * np.linalg.norm(
@@ -96,6 +96,10 @@ def check_site_in_segment(
     )
 
     # Compute area of segment if needed
+    # This is the same as `compute_segment_area` but only for a single
+    # segment, however as the numba implementation of np.cross
+    # does not support the axis parameter, the code has to be somewhat
+    # duplicated here. Update once numba supports the axis parameter.
     segment_area = (
         0.5
         * np.linalg.norm(
@@ -756,8 +760,8 @@ def compute_scenario_strike(
         avg_segment_strike_vec /= segment_trace_length[m].sum()
 
         # Choose the correct section strike vector
-        if np.dot(v3 / np.linalg.norm(v3), avg_segment_strike_vec) > np.dot(v4 /
-            np.linalg.norm(v4), avg_segment_strike_vec
+        if np.dot(v3 / np.linalg.norm(v3), avg_segment_strike_vec) > np.dot(
+            v4 / np.linalg.norm(v4), avg_segment_strike_vec
         ):
             section_strike_vecs[:, i] = v3
         else:
@@ -772,17 +776,17 @@ def compute_scenario_strike(
 
     # Switch any strike vectors with opposite sign to E
     if np.any((section_strike_flip_mask := np.sign(e_j) != np.sign(E))):
-        section_strike_vecs[:, section_strike_flip_mask] = -1.0 * section_strike_vecs[
-            :, section_strike_flip_mask
-        ]
+        section_strike_vecs[:, section_strike_flip_mask] = (
+            -1.0 * section_strike_vecs[:, section_strike_flip_mask]
+        )
     else:
         section_strike_flip_mask = np.zeros(section_strike_vecs.shape[-1], dtype=bool)
 
     # The segments corresponding to the flipped section strike vectors
     segment_strike_flip_mask = np.isin(
-            segment_section_ids,
-            segment_section_ids[unique_section_id_ind[section_strike_flip_mask]],
-        )
+        segment_section_ids,
+        segment_section_ids[unique_section_id_ind[section_strike_flip_mask]],
+    )
 
     # Compute nominal strike
     scenario_strike_vec = np.sum(section_strike_vecs, axis=1)

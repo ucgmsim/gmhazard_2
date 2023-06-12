@@ -110,10 +110,10 @@ def get_region_from_sections(
     """Computes the map region given the set of rupture sections"""
     min_lon, max_lon, min_lat, max_lat = np.inf, -np.inf, np.inf, -np.inf
     for cur_section in sections.values():
-        min_lon = min_lon if min_lon < (cur_min := cur_section[:, 0].min()) else cur_min
-        max_lon = max_lon if max_lon > (cur_max := cur_section[:, 0].max()) else cur_max
-        min_lat = min_lat if min_lat < (cur_min := cur_section[:, 1].min()) else cur_min
-        max_lat = max_lat if max_lat > (cur_max := cur_section[:, 1].max()) else cur_max
+        min_lon = min(min_lon, cur_section[:, 0].min())
+        max_lon = max(max_lon, cur_section[:, 0].max())
+        min_lat = min(min_lat, cur_section[:, 1].min())
+        max_lat = max(max_lat, cur_section[:, 1].max())
 
     return (
         min_lon - lon_bounds,
