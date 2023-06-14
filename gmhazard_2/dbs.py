@@ -143,6 +143,8 @@ class SourceModelDB:
                 for cur_path in source_definitions_dir.iterdir()
                 if cur_path.is_dir()
             ]
+            # iterdir does not guarantee order
+            source_set_dirs.sort()
 
             source_set_info = {}
             for i, cur_dir in enumerate(source_set_dirs, start=1):
