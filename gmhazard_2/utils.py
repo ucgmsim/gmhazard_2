@@ -144,16 +144,19 @@ def compute_mesh_distances(
             scenario_Rjb[i, j] = segment_rjb.min()
 
             # Compute Rx and Ry for each rupture scenario
-            cur_T, cur_U = distance.compute_scenario_rx_ry(
+            cur_scenario_segment_mask = np.isin(segment_section_ids, section_ids)
+            cur_rjb, cur_rrup, cur_T, cur_U = distance.compute_single_scenario_distances(
                 section_ids,
                 segment_nztm_coords,
                 segment_strike_vec,
                 segment_trace_length,
                 segment_section_ids,
                 segment_rjb,
+                segment_rrup,
                 segment_rx,
                 segment_ry,
                 segment_ry_origin,
+                cur_scenario_segment_mask,
             )
 
             scenario_Rx[i, j] = cur_T
