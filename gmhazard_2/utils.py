@@ -156,7 +156,6 @@ def compute_mesh_distances(
                 segment_rx,
                 segment_ry,
                 segment_ry_origin,
-                cur_scenario_segment_mask,
             )
 
             scenario_Rx[i, j] = cur_T
