@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
+import gmhazard_2.source
 from gmhazard_2 import dbs
 from gmhazard_2 import distance
 from qcore.geo import ll_bearing
@@ -94,7 +95,7 @@ def compute_mesh_distances(
         )
         / 1e3
     )
-    segment_strike, segment_strike_vec = distance.compute_segment_strike_nztm(
+    segment_strike, segment_strike_vec = gmhazard_2.source.compute_segment_strike_nztm(
         segment_nztm_coords
     )
 

@@ -1,6 +1,7 @@
 """Script for creating Rx, Ry plots for a set of manually specified segments"""
 import numpy as np
 
+import gmhazard_2.source
 from gmhazard_2 import distance
 from gmhazard_2 import plotting
 
@@ -58,7 +59,7 @@ for segment_nztm_coords in [segment_nztm_coords_1, segment_nztm_coords_2, segmen
         )
         / 1e3
     )
-    segment_strike, segment_strike_vec = distance.compute_segment_strike_nztm(
+    segment_strike, segment_strike_vec = gmhazard_2.source.compute_segment_strike_nztm(
         segment_nztm_coords
     )
 
