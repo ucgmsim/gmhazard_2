@@ -2,8 +2,40 @@ from typing import List
 
 import numba as nb
 import numpy as np
+import pandas as pd
 
 from . import distance
+
+
+def get_scenario_source_props(
+    rupture_scenarios_df: pd.DataFrame,
+    segment_nztm_coords: np.ndarray,
+    segment_section_ids: np.ndarray,
+):
+    """Computes the scenario source properties"""
+    # Compute segment and section properties
+    section_ids, section_area, section_dip, section_ztor = compute_section_source_props(
+        compute_segment_area(segment_nztm_coords),
+        compute_segment_dip(segment_nztm_coords),
+        compute_segment_ztor(segment_nztm_coords),
+        segment_section_ids,
+    )
+
+    # Compute scenario properties
+    scenario_dip, scenario_ztor = compute_scenario_source_props(
+        section_ids,
+        section_area,
+        section_dip,
+        section_ztor,
+        nb.typed.List(rupture_scenarios_df.section_ids.values),
+    )
+
+    # Create dataframe
+    return pd.DataFrame(
+        index=rupture_scenarios_df.index,
+        columns=["dip", "ztor"],
+        data=np.stack((scenario_dip, scenario_ztor), axis=1),
+    )
 
 
 def compute_segment_area(segment_nztm_coords: np.ndarray):
@@ -93,7 +125,9 @@ def compute_section_source_props(
     # Compute area and dip
     section_area = np.add.reduceat(segment_area, reduce_ind)
     section_dip = np.add.reduceat(segment_dip * segment_area, reduce_ind) / section_area
-    section_ztor = np.add.reduceat(segment_ztor * segment_area, reduce_ind) / section_area
+    section_ztor = (
+        np.add.reduceat(segment_ztor * segment_area, reduce_ind) / section_area
+    )
 
     return section_ids, section_area, section_dip, section_ztor
 
@@ -137,7 +171,8 @@ def compute_scenario_source_props(
                 section_dip[m][0] * section_area[m][0]
             )
             cur_scenario_ztor = cur_scenario_ztor + (
-                section_ztor[m][0] * section_area[m][0])
+                section_ztor[m][0] * section_area[m][0]
+            )
             cur_scenario_area = cur_scenario_area + section_area[m][0]
 
         scenario_dip[i] = cur_scenario_dip / cur_scenario_area

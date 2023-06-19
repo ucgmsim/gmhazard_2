@@ -25,8 +25,6 @@ class GMMLogicTreeType(Enum):
     TEC_TYPE = auto()
 
 
-
-
 class GMMBranch:
     """
     Represents a terminal branch
@@ -48,6 +46,7 @@ class GMMBranch:
         self.gmm_params = gmm_params
         self.sigma_mu_epsilon = sigma_mu_epsilon
 
+
 class GMMRunConfig(NamedTuple):
     """Represents a GMM run configuration"""
 
@@ -60,7 +59,12 @@ class GMMRunConfig(NamedTuple):
         return cls(
             gmm=branch.gmm,
             gmm_parameters=branch.gmm_params,
-            sigma_mu_epsilon=branch.sigma_mu_epsilon)
+            sigma_mu_epsilon=branch.sigma_mu_epsilon,
+        )
+
+    def __str__(self):
+        return f"{self.gmm.name} - GMM parameters: {self.gmm_parameters} " \
+               f"- Sigma Mu Epsilon: {self.sigma_mu_epsilon}"
 
     def __eq__(self, other: "GMMRunConfig"):
         if self.gmm is not other.gmm:
@@ -88,8 +92,13 @@ class GMMRunConfig(NamedTuple):
                 return hash((self.gmm, self.sigma_mu_epsilon))
         else:
             keys = sorted(self.gmm_parameters.keys())
-            return hash((self.gmm, tuple((k, self.gmm_parameters[k]) for k in keys), self.sigma_mu_epsilon))
-
+            return hash(
+                (
+                    self.gmm,
+                    tuple((k, self.gmm_parameters[k]) for k in keys),
+                    self.sigma_mu_epsilon,
+                )
+            )
 
 
 class GMMLogicTree:
@@ -192,7 +201,9 @@ def parse_nshm_gmm_lt(gmm_lt_ffp: Path):
             for cur_match in matches:
                 key = cur_match[0].strip()
                 if key == "sigma_mu_epsilon":
-                    sigma_mu_epsilon = v if (v:= float(cur_match[1].strip())) != 0.0 else None
+                    sigma_mu_epsilon = (
+                        v if (v := float(cur_match[1].strip())) != 0.0 else None
+                    )
                 else:
                     gmm_params[key] = cur_match[1].strip('"')
 
@@ -201,7 +212,7 @@ def parse_nshm_gmm_lt(gmm_lt_ffp: Path):
                 gmm,
                 weight,
                 sigma_mu_epsilon=sigma_mu_epsilon,
-                gmm_params=gmm_params if len(gmm_params) > 0 else None
+                gmm_params=gmm_params if len(gmm_params) > 0 else None,
             )
 
         cur_tec_type = TECT_TYPE_MAPPING[cur_tec_lt["@applyToTectonicRegionType"]]

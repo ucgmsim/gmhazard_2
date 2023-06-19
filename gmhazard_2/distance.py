@@ -5,7 +5,58 @@ import pandas as pd
 
 from pyproj import Transformer
 
-from gmhazard_2.source import compute_scenario_strike
+from . import source
+
+
+def get_scenario_distances(
+    rupture_scenarios_df: pd.DataFrame,
+    segment_nztm_coords: np.ndarray,
+    segment_section_ids: np.ndarray,
+    site_nztm_coords: np.ndarray,
+):
+    """Computes the distances from the rupture scenarios to the site"""
+    # Compute segment-properties
+    segment_trace_length = (
+        np.linalg.norm(
+            segment_nztm_coords[0, :2, :] - segment_nztm_coords[2, :2, :], axis=0
+        )
+        / 1e3
+    )
+    segment_strike, segment_strike_vec = source.compute_segment_strike_nztm(
+        segment_nztm_coords
+    )
+
+    # Compute the segment distances
+    (
+        segment_rjb_values,
+        segment_rrup_values,
+        segment_rx_values,
+        segment_ry_values,
+        segment_ry_origins,
+    ) = compute_segment_distances(
+        segment_nztm_coords, segment_strike, segment_strike_vec, site_nztm_coords
+    )
+
+    scenario_rjb, scenario_rrup, scenario_Rx, scenario_Ry = compute_scenario_distances(
+        rupture_scenarios_df.index.values,
+        nb.typed.List(rupture_scenarios_df.section_ids.values),
+        segment_nztm_coords,
+        segment_strike_vec,
+        segment_trace_length,
+        segment_section_ids,
+        segment_rjb_values,
+        segment_rrup_values,
+        segment_rx_values,
+        segment_ry_values,
+        segment_ry_origins,
+    )
+
+    df = pd.DataFrame(
+        index=rupture_scenarios_df.index.values,
+        data=np.stack([scenario_rjb, scenario_rrup, scenario_Rx, scenario_Ry], axis=1),
+        columns=["rjb", "rrup", "rx", "ry"],
+    )
+    return df
 
 
 @nb.njit(cache=True)
@@ -538,8 +589,6 @@ def compute_segment_weight(
     return sw / np.sum(sw)
 
 
-# @nb.njit("UniTuple(f8, 4)(i8[:], f8[:, :, :], f8[:, :], f8[:], "
-#          "i8[:], f8[:], f8[:], f8[:], f8[:], f8[:, :])")
 @nb.njit(
     nb.types.UniTuple(nb.float64, 4)(
         nb.int64[:],
@@ -572,24 +621,38 @@ def compute_single_scenario_distances(
 
     Parameters
     ----------
-    section_ids
-    segment_nztm_coords
-    segment_strike_vec
-    segment_trace_length
-    segment_section_ids
-    segment_rjb
+    section_ids: array of ints
+        Ids of the rupture sections for this scenario
+    segment_nztm_coords: array of floats
+        All rupture segment coordinates (NZTM)
+    segment_strike_vec: array of floats
+        The strike vector for each segment
+    segment_trace_length: array of floats
+        The trace length for each segment
+    segment_section_ids: array of ints
+        The section id for each segment
+    segment_rjb: array of floats
+        Rjb distance for each segment
     segment_rrup
+        Rrup distance for each segment
     segment_rx
+        Rx distance for each segment
     segment_ry
+        Ry distance for each segment
     segment_ry_origin
-    scenario_segment_mask: np.ndarray
-        Mask for the segments for the current scenario.
-        This is sub-optimal and temporary since
-        numba currently does not support np.isin
+        The origin used for the
+        segment Ry calculations
 
     Returns
     -------
-
+    rjb: float
+        R_JB distance for this scenario
+    rrup: float
+        R_RUP distance for this scenario
+    rx: float
+        R_X distance for this scenario
+    ry: float
+        R_Y distance for this scenario
     """
     # Compute the segment mask for the current scenario
     # scenario_segment_mask = np.isin(segment_section_ids, section_ids)
@@ -613,9 +676,6 @@ def compute_single_scenario_distances(
     rjb = np.min(segment_rjb[scenario_segment_mask])
     rrup = np.min(segment_rrup[scenario_segment_mask])
 
-    # if rjb > 500:
-    #     return None, None, None, None
-
     # Compute scenario strike
     (
         scenario_strike_vec,
@@ -623,7 +683,7 @@ def compute_single_scenario_distances(
         scenario_origin,
         section_strike_flip_mask,
         segment_strike_flip_mask,
-    ) = compute_scenario_strike(
+    ) = source.compute_scenario_strike(
         trace_points, segment_strike_vec, segment_trace_length, segment_section_ids
     )
 
@@ -718,7 +778,6 @@ def compute_single_scenario_distances(
 
 
 @nb.njit(
-    # Not sure why this doesn't work
     nb.types.UniTuple(nb.float64[:], 4)(
         nb.int64[:],
         nb.types.ListType(nb.int64[::1]),
@@ -733,7 +792,6 @@ def compute_single_scenario_distances(
         nb.float64[:, :],
     ),
     parallel=True,
-    # cache=True,
 )
 def compute_scenario_distances(
     scenario_ids: np.ndarray,
@@ -748,6 +806,11 @@ def compute_scenario_distances(
     segment_ry: np.ndarray,
     segment_ry_origin: np.ndarray,
 ):
+    """
+    Computes the Rjb, Rrup, Rx, and Ry distance
+    for each scenario. For full details off the arguments
+    see compute_single_scenario_distances
+    """
     # Create the result arrays
     scenario_rjb = np.full(scenario_ids.shape, fill_value=np.nan)
     scenario_rrup = np.full(scenario_ids.shape, fill_value=np.nan)
