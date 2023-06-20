@@ -1,11 +1,15 @@
+import json
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import geojson
+from turfpy.measurement import points_within_polygon
 
-import gmhazard_2.source
-from gmhazard_2 import dbs
-from gmhazard_2 import distance
+
+from . import dbs
+from . import distance
+from . import source
 from qcore.geo import ll_bearing
 
 from openquake.hazardlib import nrml, sourceconverter
@@ -95,7 +99,7 @@ def compute_mesh_distances(
         )
         / 1e3
     )
-    segment_strike, segment_strike_vec = gmhazard_2.source.compute_segment_strike_nztm(
+    segment_strike, segment_strike_vec = source.compute_segment_strike_nztm(
         segment_nztm_coords
     )
 
@@ -219,3 +223,34 @@ def create_OQ_lines(
         )
 
     return lines
+
+def get_backarc_mask(backarc_json_ffp: Path, locs: np.ndarray):
+    """
+    Computes a mask identifying each location
+    that requires the backarc flag based on
+    wether it is inside the backarc polygon or not
+
+    locs: array of floats
+        [lon, lat]
+    """
+    # Determine if backarc needs to be enabled for each loc
+    points = geojson.FeatureCollection(
+        [
+            geojson.Feature(geometry=geojson.Point(tuple(cur_loc[::-1]), id=ix))
+            for ix, cur_loc in enumerate(locs)
+        ]
+    )
+    with backarc_json_ffp.open("r") as f:
+        poly_coords = np.flip(json.load(f)["geometry"]["coordinates"][0], axis=1)
+
+    polygon = geojson.Polygon([poly_coords.tolist()])
+    backarc_ind = (
+        [
+            cur_point["geometry"]["id"]
+            for cur_point in points_within_polygon(points, polygon)["features"]
+        ],
+    )
+    backarc_mask = np.zeros(shape=locs.shape[0], dtype=bool)
+    backarc_mask[backarc_ind] = True
+
+    return backarc_mask

@@ -14,27 +14,35 @@ def get_scenario_source_props(
 ):
     """Computes the scenario source properties"""
     # Compute segment and section properties
-    section_ids, section_area, section_dip, section_ztor = compute_section_source_props(
-        compute_segment_area(segment_nztm_coords),
-        compute_segment_dip(segment_nztm_coords),
-        compute_segment_ztor(segment_nztm_coords),
-        segment_section_ids,
-    )
-
-    # Compute scenario properties
-    scenario_dip, scenario_ztor = compute_scenario_source_props(
+    (
         section_ids,
         section_area,
         section_dip,
         section_ztor,
+        section_zdepth,
+    ) = compute_section_source_props(
+        compute_segment_area(segment_nztm_coords),
+        compute_segment_dip(segment_nztm_coords),
+        compute_segment_ztor(segment_nztm_coords),
+        compute_segment_zdepth(segment_nztm_coords),
+        segment_section_ids,
+    )
+
+    # Compute scenario properties
+    scenario_dip, scenario_ztor, scenario_zdepth = compute_scenario_source_props(
+        section_ids,
+        section_area,
+        section_dip,
+        section_ztor,
+        section_zdepth,
         nb.typed.List(rupture_scenarios_df.section_ids.values),
     )
 
     # Create dataframe
     return pd.DataFrame(
         index=rupture_scenarios_df.index,
-        columns=["dip", "ztor"],
-        data=np.stack((scenario_dip, scenario_ztor), axis=1),
+        columns=["dip", "ztor", "hypo_depth"],
+        data=np.stack((scenario_dip, scenario_ztor, scenario_zdepth), axis=1),
     )
 
 
@@ -67,8 +75,8 @@ def compute_segment_area(segment_nztm_coords: np.ndarray):
         + 0.5
         * np.linalg.norm(
             np.cross(
-                segment_nztm_coords[2, :, :] - segment_nztm_coords[0, :, :],
-                segment_nztm_coords[3, :, :] - segment_nztm_coords[0, :, :],
+                segment_nztm_coords[1, :, :] - segment_nztm_coords[3, :, :],
+                segment_nztm_coords[2, :, :] - segment_nztm_coords[3, :, :],
                 axis=0,
             ),
             axis=0,
@@ -105,10 +113,43 @@ def compute_segment_ztor(segment_nztm_coords: np.ndarray):
     return np.mean(segment_nztm_coords[::2, 2, :], axis=0) / 1e3
 
 
+def compute_segment_zdepth(segment_nztm_coords: np.ndarray):
+    """
+    Computes the hypocentre depth for this segment
+    Based on Mai et al. 2015, just using 60% of
+    down-dip width as hypocentre
+
+    Segment down-dip with is just computed as the average
+    of the down-dip width at the two endpoints
+    """
+    w1 = np.linalg.norm(
+        segment_nztm_coords[0, :, :] - segment_nztm_coords[1, :, :], axis=0
+    )
+    w2 = np.linalg.norm(
+        segment_nztm_coords[2, :, :] - segment_nztm_coords[3, :, :], axis=0
+    )
+
+    W = np.mean(np.stack((w1, w2), axis=0), axis=0)
+
+    # Find trace and bottom edge mid-point
+    trace_mid = np.mean(segment_nztm_coords[::2, :, :], axis=0)
+    bottom_mid = np.mean(segment_nztm_coords[1::2, :, :], axis=0)
+
+    # Get down dip vector
+    down_dip_vec = bottom_mid - trace_mid
+    down_dip_vec /= np.linalg.norm(down_dip_vec, axis=0)
+
+    # Compute hypocentre location
+    h_loc = trace_mid + 0.6 * W * down_dip_vec
+
+    return h_loc[2, :] / 1e3
+
+
 def compute_section_source_props(
     segment_area: np.ndarray,
     segment_dip: np.ndarray,
     segment_ztor: np.ndarray,
+    segment_zdepth: np.ndarray,
     segment_section_ids: np.ndarray,
 ):
     """
@@ -128,13 +169,17 @@ def compute_section_source_props(
     section_ztor = (
         np.add.reduceat(segment_ztor * segment_area, reduce_ind) / section_area
     )
+    section_zdepth = (
+        np.add.reduceat(segment_zdepth * segment_area, reduce_ind) / section_area
+    )
 
-    return section_ids, section_area, section_dip, section_ztor
+    return section_ids, section_area, section_dip, section_ztor, section_zdepth
 
 
 @nb.njit(
-    nb.types.UniTuple(nb.float64[:], 2)(
+    nb.types.UniTuple(nb.float64[:], 3)(
         nb.int64[::1],
+        nb.float64[::1],
         nb.float64[::1],
         nb.float64[::1],
         nb.float64[::1],
@@ -147,24 +192,24 @@ def compute_scenario_source_props(
     section_area: np.ndarray,
     section_dip: np.ndarray,
     section_ztor: np.ndarray,
+    section_zdepth: np.ndarray,
     scenario_section_ids: List[np.ndarray],
 ):
     """
     Compute the dip and ztor for each scenario
-
-    Is there a better way to do this???
     """
     # Sanity check
     assert section_ids.size == np.unique(section_ids).size
 
     scenario_dip = np.zeros(len(scenario_section_ids))
     scenario_ztor = np.zeros(len(scenario_section_ids))
+    scenario_zdepth = np.zeros(len(scenario_section_ids))
     for i in nb.prange(len(scenario_section_ids)):
         cur_section_ids = scenario_section_ids[i]
 
         # Needed as numba doesn't support np.isin yet
         cur_scenario_dip, cur_scenario_area = 0.0, 0.0
-        cur_scenario_ztor = 0.0
+        cur_scenario_ztor, cur_scenario_zdepth = 0.0, 0.0
         for j in range(cur_section_ids.size):
             m = section_ids == cur_section_ids[j]
             cur_scenario_dip = cur_scenario_dip + (
@@ -173,12 +218,16 @@ def compute_scenario_source_props(
             cur_scenario_ztor = cur_scenario_ztor + (
                 section_ztor[m][0] * section_area[m][0]
             )
+            cur_scenario_zdepth = cur_scenario_zdepth + (
+                section_zdepth[m][0] * section_area[m][0]
+            )
             cur_scenario_area = cur_scenario_area + section_area[m][0]
 
         scenario_dip[i] = cur_scenario_dip / cur_scenario_area
         scenario_ztor[i] = cur_scenario_ztor / cur_scenario_area
+        scenario_zdepth[i] = cur_scenario_zdepth / cur_scenario_area
 
-    return scenario_dip, scenario_ztor
+    return scenario_dip, scenario_ztor, scenario_zdepth
 
 
 @nb.njit(cache=True)
@@ -356,55 +405,6 @@ def compute_scenario_strike(
     )
 
 
-def compute_segment_strike_ll(
-    segment_coords: np.ndarray, segment_nztm_coords: np.ndarray
-):
-    """
-    Computes strike for the given segments
-    using lon/lat coordinates
-
-    Parameters
-    ----------
-    segment_coords: array of floats
-        The coordinates of the segment corners
-        Assumes that the first and third point
-        define the trace of the fault with the
-        and that the second and fourth point
-        are the corresponding down dip points
-
-        shape: [4, 2, n_faults], (lon, lat)
-    segment_nztm_coords: array of floats
-        The coordinates of the segment corners
-        in NZTM coordinate system
-
-        shape: [4, 2, n_faults], (x, y)
-
-    Returns
-    -------
-    strike: array of floats
-        shape: [n_points]
-    """
-    strike_1 = distance.ll_bearing(segment_coords[0, :2, :], segment_coords[2, :2, :])
-    strike_2 = distance.ll_bearing(segment_coords[2, :2, :], segment_coords[0, :2, :])
-
-    # Ensure that strike is in the correct direction
-    v1 = segment_nztm_coords[1, :, :] - segment_nztm_coords[0, :, :]
-    v2 = segment_nztm_coords[2, :, :] - segment_nztm_coords[0, :, :]
-    angle_1 = np.degrees(
-        np.arccos(
-            np.einsum("ij, ij -> j", v1, v2)
-            / (np.linalg.norm(v1, axis=0) * np.linalg.norm(v2, axis=0))
-        )
-    )
-    bearing_1 = distance.ll_bearing(segment_coords[0, :2, :], segment_coords[1, :2, :])
-
-    # Ensure the correct strike is used
-    strike = np.where(
-        np.abs((strike_1 + angle_1) - bearing_1) < 5.0, strike_1, strike_2
-    )
-    return strike
-
-
 def compute_segment_strike_nztm(segment_nztm_coords: np.ndarray):
     """
     Computes strike for the given segments
@@ -438,15 +438,15 @@ def compute_segment_strike_nztm(segment_nztm_coords: np.ndarray):
     s2 = s2 / np.linalg.norm(s2, axis=0)
     strike_2 = np.mod(np.degrees(np.arctan2(s2[0, :], s2[1, :])), 360)
 
-    # Compute one of the down dip vectors
+    # Compute one of the down dip vectors (surface projection)
     d1 = segment_nztm_coords[1, :2, :] - segment_nztm_coords[0, :2, :]
     d1 = d1 / np.linalg.norm(d1, axis=0)
-    bearing_1 = np.mod(np.degrees(np.arctan2(d1[0, :], d1[1, :])), 360)
-    strike_ddip_angle_1 = np.degrees(np.arccos(np.einsum("ij,ij->j", s1, d1)))
+    phi_1 = np.degrees(np.arccos(np.einsum("ij,ij->j", s1, d1)))
+    gamma_1 = np.mod(np.degrees(np.arctan2(d1[0, :], d1[1, :])), 360)
 
     # Choose the correct strike vector
     strike = np.where(
-        (mask := np.isclose(strike_1 + strike_ddip_angle_1, bearing_1)),
+        (mask := np.isclose(strike_1 + phi_1, gamma_1)),
         strike_1,
         strike_2,
     )
