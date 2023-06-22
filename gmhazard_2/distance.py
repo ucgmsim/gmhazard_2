@@ -14,7 +14,28 @@ def get_scenario_distances(
     segment_section_ids: np.ndarray,
     site_nztm_coords: np.ndarray,
 ):
-    """Computes the distances from the rupture scenarios to the site"""
+    """
+    Computes the distances from the rupture scenarios to the site
+
+    Parameters
+    ----------
+    rupture_scenarios_df: dataframe
+        Rupture scenarios dataframe
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+    segment_section_ids: array of ints
+        Section ids of the segments
+    site_nztm_coords: array of floats
+        Coordinates of points of interest
+        Shape: [3] (x, y, 0)
+
+    Returns
+    -------
+    dataframe
+        Dataframe of site-source distances
+    """
     # Compute segment-properties
     segment_trace_length = (
         np.linalg.norm(
@@ -136,11 +157,13 @@ def check_site_in_segment(
 
 @nb.njit(cache=True)
 def f(A: np.ndarray, B: np.ndarray, t: float):
+    """Helper function for computing the minimum distance to a line segment"""
     return (1 - t) * A + t * B
 
 
 @nb.njit(cache=True)
 def g(u: np.ndarray, v: np.ndarray, t: float):
+    """Helper function for computing the minimum distance to a line segment"""
     return t ** 2 * np.dot(v, v) + 2 * t * np.dot(u, v) + np.dot(u, u)
 
 
@@ -195,19 +218,6 @@ def compute_min_line_segment_distance(
         D[i] = np.linalg.norm(C - site_coords) / 1e3
 
     return np.min(D)
-
-
-def ll_bearing(point_1: np.ndarray, point_2: np.ndarray):
-    # Calculate the bearing
-    lat1 = np.radians(point_1[1, :])
-    lat2 = np.radians(point_2[1, :])
-    dlon = np.radians(point_2[0, :] - point_1[0, :])
-
-    y = np.sin(dlon) * np.cos(lat2)
-    x = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(dlon)
-
-    # Convert to 0 - 360
-    return np.mod(np.degrees(np.arctan2(y, x)), 360)
 
 
 def compute_min_line_distance(line_points: np.ndarray, site_coords: np.ndarray):
@@ -276,7 +286,27 @@ def compute_closest_point_on_line(
     nb.types.UniTuple(nb.float64[:], 2)(nb.float64[:, :, :], nb.float64[:]),
     cache=True,
 )
-def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm: np.ndarray):
+def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm_coords: np.ndarray):
+    """
+    Computes the Rjb and Rrup values for each segment
+
+    Parameters
+    ----------
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+    site_nztm_coords: array of floats
+        Coordinates of points of interest
+        Shape: [3] (x, y, 0)
+
+    Returns
+    -------
+    rjb_values: array of floats
+        The Rjb values for each segment
+    rrup_values: array of floats
+        The Rrup values for each segment
+    """
     rrup_values = np.zeros(segment_nztm_coords.shape[-1])
     rjb_values = np.zeros(segment_nztm_coords.shape[-1])
 
@@ -288,13 +318,13 @@ def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm: np.ndar
         cur_segment_nztm_coords = segment_nztm_coords[:, :, i]
 
         # Check if points is on the segment
-        if check_site_in_segment(surface_segment_nztm_coords[:, :, i], site_nztm):
+        if check_site_in_segment(surface_segment_nztm_coords[:, :, i], site_nztm_coords):
             # Compute distance to the plane
             v1 = cur_segment_nztm_coords[1, :] - cur_segment_nztm_coords[0, :]
             v2 = cur_segment_nztm_coords[2, :] - cur_segment_nztm_coords[0, :]
             n = np.cross(v1, v2)
             rrup_values[i] = (
-                np.dot(n, (site_nztm - cur_segment_nztm_coords[0, :]))
+                np.dot(n, (site_nztm_coords - cur_segment_nztm_coords[0, :]))
                 / np.linalg.norm(n)
             ) / 1e3
             rjb_values[i] = 0
@@ -303,10 +333,10 @@ def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm: np.ndar
         A_ind = np.asarray([0, 0, 3, 3])
         B_ind = np.asarray([1, 2, 1, 2])
         rrup_values[i] = compute_min_line_segment_distance(
-            cur_segment_nztm_coords, site_nztm, A_ind, B_ind
+            cur_segment_nztm_coords, site_nztm_coords, A_ind, B_ind
         )
         rjb_values[i] = compute_min_line_segment_distance(
-            cur_segment_nztm_coords[:, :2], site_nztm[:2], A_ind, B_ind
+            cur_segment_nztm_coords[:, :2], site_nztm_coords[:2], A_ind, B_ind
         )
 
     return rjb_values, rrup_values

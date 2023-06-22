@@ -150,7 +150,12 @@ def compute_mesh_distances(
 
             # Compute Rx and Ry for each rupture scenario
             cur_scenario_segment_mask = np.isin(segment_section_ids, section_ids)
-            cur_rjb, cur_rrup, cur_T, cur_U = distance.compute_single_scenario_distances(
+            (
+                cur_rjb,
+                cur_rrup,
+                cur_T,
+                cur_U,
+            ) = distance.compute_single_scenario_distances(
                 section_ids,
                 segment_nztm_coords,
                 segment_strike_vec,
@@ -223,6 +228,7 @@ def create_OQ_lines(
         )
 
     return lines
+
 
 def get_backarc_mask(backarc_json_ffp: Path, locs: np.ndarray):
     """
