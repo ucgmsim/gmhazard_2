@@ -115,9 +115,9 @@ def compute_segment_ztor(segment_nztm_coords: np.ndarray):
 
 def compute_segment_zdepth(segment_nztm_coords: np.ndarray):
     """
-    Computes the hypocentre depth for this segment
+    Computes the hypocenter depth for this segment
     Based on Mai et al. 2015, just using 60% of
-    down-dip width as hypocentre
+    down-dip width as hypocenter
 
     Segment down-dip with is just computed as the average
     of the down-dip width at the two endpoints
@@ -196,7 +196,7 @@ def compute_scenario_source_props(
     scenario_section_ids: List[np.ndarray],
 ):
     """
-    Compute the dip and ztor for each scenario
+    Compute the area, dip, Ztor and Zdepth for each scenario
     """
     # Sanity check
     assert section_ids.size == np.unique(section_ids).size
