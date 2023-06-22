@@ -1,49 +1,83 @@
-import time
-from typing import Tuple
+from typing import Tuple, List
 import numba as nb
 import numpy as np
 import pandas as pd
 
 from pyproj import Transformer
-from . import plotting
+
+from . import source
 
 
-def compute_segment_area(segment_nztm_coords: np.ndarray):
+def get_scenario_distances(
+    rupture_scenarios_df: pd.DataFrame,
+    segment_nztm_coords: np.ndarray,
+    segment_section_ids: np.ndarray,
+    site_nztm_coords: np.ndarray,
+):
     """
-    Computes the area of a segment
+    Computes the distances from the rupture scenarios to the site
 
     Parameters
     ----------
+    rupture_scenarios_df: dataframe
+        Rupture scenarios dataframe
     segment_nztm_coords: array of floats
         Coordinates of the segment corner points in NZTM
         where points 0 and 2 define the fault trace
         shape: [4, 3, n_segments]
+    segment_section_ids: array of ints
+        Section ids of the segments
+    site_nztm_coords: array of floats
+        Coordinates of points of interest
+        Shape: [3] (x, y, 0)
 
     Returns
     -------
-    array of floats:
-        The area of each segment
+    dataframe
+        Dataframe of site-source distances
     """
-    return (
-        0.5
-        * np.linalg.norm(
-            np.cross(
-                segment_nztm_coords[1, :, :] - segment_nztm_coords[0, :, :],
-                segment_nztm_coords[2, :, :] - segment_nztm_coords[0, :, :],
-                axis=0,
-            ),
-            axis=0,
+    # Compute segment-properties
+    segment_trace_length = (
+        np.linalg.norm(
+            segment_nztm_coords[0, :2, :] - segment_nztm_coords[2, :2, :], axis=0
         )
-        + 0.5
-        * np.linalg.norm(
-            np.cross(
-                segment_nztm_coords[2, :, :] - segment_nztm_coords[0, :, :],
-                segment_nztm_coords[3, :, :] - segment_nztm_coords[0, :, :],
-                axis=0,
-            ),
-            axis=0,
-        )
-    ) / 1e6
+        / 1e3
+    )
+    segment_strike, segment_strike_vec = source.compute_segment_strike_nztm(
+        segment_nztm_coords
+    )
+
+    # Compute the segment distances
+    (
+        segment_rjb_values,
+        segment_rrup_values,
+        segment_rx_values,
+        segment_ry_values,
+        segment_ry_origins,
+    ) = compute_segment_distances(
+        segment_nztm_coords, segment_strike, segment_strike_vec, site_nztm_coords
+    )
+
+    scenario_rjb, scenario_rrup, scenario_Rx, scenario_Ry = compute_scenario_distances(
+        rupture_scenarios_df.index.values,
+        nb.typed.List(rupture_scenarios_df.section_ids.values),
+        segment_nztm_coords,
+        segment_strike_vec,
+        segment_trace_length,
+        segment_section_ids,
+        segment_rjb_values,
+        segment_rrup_values,
+        segment_rx_values,
+        segment_ry_values,
+        segment_ry_origins,
+    )
+
+    df = pd.DataFrame(
+        index=rupture_scenarios_df.index.values,
+        data=np.stack([scenario_rjb, scenario_rrup, scenario_Rx, scenario_Ry], axis=1),
+        columns=["rjb", "rrup", "rx", "ry"],
+    )
+    return df
 
 
 @nb.njit(cache=True)
@@ -79,7 +113,7 @@ def check_site_in_segment(
     index_combs = [(0, 1), (1, 3), (3, 2), (2, 0)]
     p_total_area = (
         np.sum(
-            np.asarray( # This is needed for numba
+            np.asarray(  # This is needed for numba
                 [
                     0.5
                     * np.linalg.norm(
@@ -121,13 +155,15 @@ def check_site_in_segment(
     return np.abs(p_total_area - segment_area) < 1e-6
 
 
-@nb.njit
+@nb.njit(cache=True)
 def f(A: np.ndarray, B: np.ndarray, t: float):
+    """Helper function for computing the minimum distance to a line segment"""
     return (1 - t) * A + t * B
 
 
-@nb.njit
+@nb.njit(cache=True)
 def g(u: np.ndarray, v: np.ndarray, t: float):
+    """Helper function for computing the minimum distance to a line segment"""
     return t ** 2 * np.dot(v, v) + 2 * t * np.dot(u, v) + np.dot(u, u)
 
 
@@ -182,118 +218,6 @@ def compute_min_line_segment_distance(
         D[i] = np.linalg.norm(C - site_coords) / 1e3
 
     return np.min(D)
-
-
-def ll_bearing(point_1: np.ndarray, point_2: np.ndarray):
-    # Calculate the bearing
-    lat1 = np.radians(point_1[1, :])
-    lat2 = np.radians(point_2[1, :])
-    dlon = np.radians(point_2[0, :] - point_1[0, :])
-
-    y = np.sin(dlon) * np.cos(lat2)
-    x = np.cos(lat1) * np.sin(lat2) - np.sin(lat1) * np.cos(lat2) * np.cos(dlon)
-
-    # Convert to 0 - 360
-    return np.mod(np.degrees(np.arctan2(y, x)), 360)
-
-
-def compute_segment_strike_nztm(segment_nztm_coords: np.ndarray):
-    """
-    Computes strike for the given segments
-    using NZTM coordinates
-
-    Parameters
-    ----------
-    segment_nztm_coords:
-        The NZTM coordinates of the segment corners
-        Assumes that the first and third point
-        define the trace of the fault with the
-        and that the second and fourth point
-        are the corresponding down dip points
-
-        shape: [4, 2, n_faults], (x, y)
-
-    Returns
-    -------
-    strike: array of floats
-        shape: [n_points]
-    strike_vec: array of floats
-        Unit vector for the direction of strike
-        shape: [2, n_points]
-    """
-    # Compute the two possible strike vectors
-    s1 = segment_nztm_coords[2, :2, :] - segment_nztm_coords[0, :2, :]
-    s1 = s1 / np.linalg.norm(s1, axis=0)
-    strike_1 = np.mod(np.degrees(np.arctan2(s1[0, :], s1[1, :])), 360)
-
-    s2 = segment_nztm_coords[0, :2, :] - segment_nztm_coords[2, :2, :]
-    s2 = s2 / np.linalg.norm(s2, axis=0)
-    strike_2 = np.mod(np.degrees(np.arctan2(s2[0, :], s2[1, :])), 360)
-
-    # Compute one of the down dip vectors
-    d1 = segment_nztm_coords[1, :2, :] - segment_nztm_coords[0, :2, :]
-    d1 = d1 / np.linalg.norm(d1, axis=0)
-    bearing_1 = np.mod(np.degrees(np.arctan2(d1[0, :], d1[1, :])), 360)
-    strike_ddip_angle_1 = np.degrees(np.arccos(np.einsum("ij,ij->j", s1, d1)))
-
-    # Choose the correct strike vector
-    strike = np.where(
-        (mask := np.isclose(strike_1 + strike_ddip_angle_1, bearing_1)),
-        strike_1,
-        strike_2,
-    )
-    strike_vector = np.where(mask, s1, s2)
-
-    return strike, strike_vector
-
-
-def compute_segment_strike_ll(
-    segment_coords: np.ndarray, segment_nztm_coords: np.ndarray
-):
-    """
-    Computes strike for the given segments
-    using lon/lat coordinates
-
-    Parameters
-    ----------
-    segment_coords: array of floats
-        The coordinates of the segment corners
-        Assumes that the first and third point
-        define the trace of the fault with the
-        and that the second and fourth point
-        are the corresponding down dip points
-
-        shape: [4, 2, n_faults], (lon, lat)
-    segment_nztm_coords: array of floats
-        The coordinates of the segment corners
-        in NZTM coordinate system
-
-        shape: [4, 2, n_faults], (x, y)
-
-    Returns
-    -------
-    strike: array of floats
-        shape: [n_points]
-    """
-    strike_1 = ll_bearing(segment_coords[0, :2, :], segment_coords[2, :2, :])
-    strike_2 = ll_bearing(segment_coords[2, :2, :], segment_coords[0, :2, :])
-
-    # Ensure that strike is in the correct direction
-    v1 = segment_nztm_coords[1, :, :] - segment_nztm_coords[0, :, :]
-    v2 = segment_nztm_coords[2, :, :] - segment_nztm_coords[0, :, :]
-    angle_1 = np.degrees(
-        np.arccos(
-            np.einsum("ij, ij -> j", v1, v2)
-            / (np.linalg.norm(v1, axis=0) * np.linalg.norm(v2, axis=0))
-        )
-    )
-    bearing_1 = ll_bearing(segment_coords[0, :2, :], segment_coords[1, :2, :])
-
-    # Ensure the correct strike is used
-    strike = np.where(
-        np.abs((strike_1 + angle_1) - bearing_1) < 5.0, strike_1, strike_2
-    )
-    return strike
 
 
 def compute_min_line_distance(line_points: np.ndarray, site_coords: np.ndarray):
@@ -362,7 +286,27 @@ def compute_closest_point_on_line(
     nb.types.UniTuple(nb.float64[:], 2)(nb.float64[:, :, :], nb.float64[:]),
     cache=True,
 )
-def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm: np.ndarray):
+def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm_coords: np.ndarray):
+    """
+    Computes the Rjb and Rrup values for each segment
+
+    Parameters
+    ----------
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+    site_nztm_coords: array of floats
+        Coordinates of points of interest
+        Shape: [3] (x, y, 0)
+
+    Returns
+    -------
+    rjb_values: array of floats
+        The Rjb values for each segment
+    rrup_values: array of floats
+        The Rrup values for each segment
+    """
     rrup_values = np.zeros(segment_nztm_coords.shape[-1])
     rjb_values = np.zeros(segment_nztm_coords.shape[-1])
 
@@ -374,13 +318,13 @@ def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm: np.ndar
         cur_segment_nztm_coords = segment_nztm_coords[:, :, i]
 
         # Check if points is on the segment
-        if check_site_in_segment(surface_segment_nztm_coords[:, :, i], site_nztm):
+        if check_site_in_segment(surface_segment_nztm_coords[:, :, i], site_nztm_coords):
             # Compute distance to the plane
             v1 = cur_segment_nztm_coords[1, :] - cur_segment_nztm_coords[0, :]
             v2 = cur_segment_nztm_coords[2, :] - cur_segment_nztm_coords[0, :]
             n = np.cross(v1, v2)
             rrup_values[i] = (
-                np.dot(n, (site_nztm - cur_segment_nztm_coords[0, :]))
+                np.dot(n, (site_nztm_coords - cur_segment_nztm_coords[0, :]))
                 / np.linalg.norm(n)
             ) / 1e3
             rjb_values[i] = 0
@@ -389,10 +333,10 @@ def compute_segment_rjb_rrup(segment_nztm_coords: np.ndarray, site_nztm: np.ndar
         A_ind = np.asarray([0, 0, 3, 3])
         B_ind = np.asarray([1, 2, 1, 2])
         rrup_values[i] = compute_min_line_segment_distance(
-            cur_segment_nztm_coords, site_nztm, A_ind, B_ind
+            cur_segment_nztm_coords, site_nztm_coords, A_ind, B_ind
         )
         rjb_values[i] = compute_min_line_segment_distance(
-            cur_segment_nztm_coords[:, :2], site_nztm[:2], A_ind, B_ind
+            cur_segment_nztm_coords[:, :2], site_nztm_coords[:2], A_ind, B_ind
         )
 
     return rjb_values, rrup_values
@@ -492,24 +436,6 @@ def segment_to_nztm(segment_coords: np.ndarray) -> np.ndarray:
     segment_nztm_coords[:, 2, :] = segment_coords[:, 2, :] * 1e3
 
     return segment_nztm_coords
-
-
-def to_ll_coords(nztm_coords: np.ndarray):
-    """
-    Converts nztm coordinates to lon, lat
-
-    Parameters
-    ----------
-    nztm_coords: array of floats
-        shape: [2, n_points]
-
-    Returns
-    -------
-    coords: array of floats
-        shape: [2, n_points]
-    """
-    transformer = Transformer.from_crs(2193, 4326, always_xy=True)
-    return np.stack(transformer.transform(nztm_coords[0, :], nztm_coords[1, :]), axis=0)
 
 
 def compute_segment_rx_ry(
@@ -672,145 +598,7 @@ def compute_segment_distances(
     )
 
 
-def compute_scenario_strike(
-    trace_points: np.ndarray,
-    segment_strike_vecs: np.ndarray,
-    segment_trace_length: np.ndarray,
-    segment_section_ids: np.ndarray,
-):
-    """
-    Compute nominal strike across rupture scenario
-    Based on Spuch et al. (2015)
-    Section: Strike Discordance and Nominal Strike
-
-    Note: this calculation is done based on the segments
-    as the strike varies across segments of a rupture section
-
-    Note II: As this calculation potentially flips the segment strike
-    vector, the segment strike vector is not modified in place
-    instead a mask of the flipped strike segments is returned
-
-    Parameters
-    ----------
-    trace_points: array of floats
-        The coordinates (NZTM) of the trace points
-        shape: [n_trace_points, 2, n_segments]
-    segment_strike_vecs
-        The strike vector of each segment
-        shape: [2, n_segments]
-    segment_trace_length
-        The length of each segment
-        shape: [n_segments]
-
-    Returns
-    -------
-    scenario_strike_vec: array of floats
-        The strike vector of the rupture scenario
-        shape: [2]
-    scenario_strike: float
-        The strike of the rupture scenario
-    scenario_origin: array of floats
-        The origin of the rupture scenario
-        shape: [2]
-    segment_strike_flip_mask: array of bools
-        A mask of the segments that have strike flipped
-        shape: [n_segments]
-    """
-    # Make matrix of all unique trace points
-    unique_trace_points = np.unique(
-        trace_points.transpose((0, 2, 1)).reshape((-1, 2)), axis=0
-    )
-
-    # Compute the distance matrix
-    dist_matrix = np.zeros((unique_trace_points.shape[0], unique_trace_points.shape[0]))
-    for i in range(unique_trace_points.shape[0]):
-        dist_matrix[i, :] = np.linalg.norm(
-            unique_trace_points[i] - unique_trace_points, axis=1
-        )
-
-    # Find the trace point combination that has the maximum separation distance
-    ix_1, ix_2 = np.unravel_index(dist_matrix.argmax(), dist_matrix.shape)
-
-    # Compute possible vectors
-    v1 = unique_trace_points[ix_1] - unique_trace_points[ix_2]
-    v1 /= np.linalg.norm(v1)
-    v2 = unique_trace_points[ix_2] - unique_trace_points[ix_1]
-    v2 /= np.linalg.norm(v2)
-
-    # Choose the east pointing one and compute a_hat
-    a = v1 if v1[0] > 0 else v2
-    a_hat = a / np.linalg.norm(a)
-
-    # Compute the "strike" per section/fault trace
-    # based on the equation for e_j in Spuch et al. (2015)
-    # I.e. the vector from the origin to the end of the trace
-    _, unique_section_id_ind = np.unique(segment_section_ids, return_index=True)
-    section_strike_vecs = np.zeros((2, unique_section_id_ind.size))
-    for i, ix in enumerate(unique_section_id_ind):
-        cur_section_id = segment_section_ids[ix]
-        m = segment_section_ids == cur_section_id
-        # Compute the two possible strike vectors
-        v3 = trace_points[:, :, m][0, :, 0] - trace_points[:, :, m][1, :, -1]
-        v4 = trace_points[:, :, m][1, :, -1] - trace_points[:, :, m][0, :, 0]
-
-        # Compute the average segment strike vector
-        avg_segment_strike_vec = (
-            segment_strike_vecs[:, m] * segment_trace_length[m]
-        ).sum(axis=1)
-        avg_segment_strike_vec /= segment_trace_length[m].sum()
-
-        # Choose the correct section strike vector
-        if np.dot(v3 / np.linalg.norm(v3), avg_segment_strike_vec) > np.dot(
-            v4 / np.linalg.norm(v4), avg_segment_strike_vec
-        ):
-            section_strike_vecs[:, i] = v3
-        else:
-            section_strike_vecs[:, i] = v4
-
-    # Compute e_j = strike_vec . a_hat
-    # e_j = np.matmul(segment_strike_vecs.T, a_hat)
-    e_j = np.einsum("ij,i->j", section_strike_vecs, a_hat)
-
-    # Compute E
-    E = np.sum(e_j)
-
-    # Switch any strike vectors with opposite sign to E
-    if np.any((section_strike_flip_mask := np.sign(e_j) != np.sign(E))):
-        section_strike_vecs[:, section_strike_flip_mask] = (
-            -1.0 * section_strike_vecs[:, section_strike_flip_mask]
-        )
-    else:
-        section_strike_flip_mask = np.zeros(section_strike_vecs.shape[-1], dtype=bool)
-
-    # The segments corresponding to the flipped section strike vectors
-    segment_strike_flip_mask = np.isin(
-        segment_section_ids,
-        segment_section_ids[unique_section_id_ind[section_strike_flip_mask]],
-    )
-
-    # Compute nominal strike
-    scenario_strike_vec = np.sum(section_strike_vecs, axis=1)
-    scenario_strike = np.mod(
-        np.degrees(np.arctan2(scenario_strike_vec[0], scenario_strike_vec[1])),
-        360,
-    )
-    scenario_strike_vec /= np.linalg.norm(scenario_strike_vec)
-
-    scenario_origin = (
-        unique_trace_points[ix_2]
-        if np.dot(v1, scenario_strike_vec) > 0
-        else unique_trace_points[ix_1]
-    )
-
-    return (
-        scenario_strike_vec,
-        scenario_strike,
-        scenario_origin,
-        section_strike_flip_mask,
-        segment_strike_flip_mask,
-    )
-
-
+@nb.njit(nb.float64[::1](nb.float64[::1], nb.float64[::1], nb.float64[::1]))
 def compute_segment_weight(
     segment_ry: np.ndarray, segment_rx: np.ndarray, segment_trace_length: np.ndarray
 ):
@@ -824,39 +612,99 @@ def compute_segment_weight(
     ) / segment_rx
 
     # Site is on the extension of the segment
-    if np.any(
-        m := np.isclose(segment_rx, 0)
-        & ((segment_ry < 0) | (segment_ry > segment_trace_length))
-    ):
-        sw[m] = 1 / (segment_ry[m] - segment_trace_length[m]) - 1 / segment_rx[m]
+    m = np.isclose(segment_rx, 0.0)
+    if np.any(m & ((segment_ry < 0.0) | (segment_ry > segment_trace_length))):
+        sw[m] = 1 / (segment_ry[m] - segment_trace_length[m]) - 1.0 / segment_rx[m]
 
     return sw / np.sum(sw)
 
 
-def compute_scenario_rx_ry(
+@nb.njit(
+    nb.types.UniTuple(nb.float64, 4)(
+        nb.int64[:],
+        nb.float64[:, :, :],
+        nb.float64[:, :],
+        nb.float64[:],
+        nb.int64[:],
+        nb.float64[:],
+        nb.float64[:],
+        nb.float64[:],
+        nb.float64[:],
+        nb.float64[:, :],
+    )
+)
+def compute_single_scenario_distances(
     section_ids: np.ndarray,
     segment_nztm_coords: np.ndarray,
     segment_strike_vec: np.ndarray,
     segment_trace_length: np.ndarray,
     segment_section_ids: np.ndarray,
     segment_rjb: np.ndarray,
+    segment_rrup: np.ndarray,
     segment_rx: np.ndarray,
     segment_ry: np.ndarray,
     segment_ry_origin: np.ndarray,
 ):
+    """
+    Computes the distances for the scenario defined
+    by the given section ids
+
+    Parameters
+    ----------
+    section_ids: array of ints
+        Ids of the rupture sections for this scenario
+    segment_nztm_coords: array of floats
+        All rupture segment coordinates (NZTM)
+    segment_strike_vec: array of floats
+        The strike vector for each segment
+    segment_trace_length: array of floats
+        The trace length for each segment
+    segment_section_ids: array of ints
+        The section id for each segment
+    segment_rjb: array of floats
+        Rjb distance for each segment
+    segment_rrup
+        Rrup distance for each segment
+    segment_rx
+        Rx distance for each segment
+    segment_ry
+        Ry distance for each segment
+    segment_ry_origin
+        The origin used for the
+        segment Ry calculations
+
+    Returns
+    -------
+    rjb: float
+        R_JB distance for this scenario
+    rrup: float
+        R_RUP distance for this scenario
+    rx: float
+        R_X distance for this scenario
+    ry: float
+        R_Y distance for this scenario
+    """
+    # Compute the segment mask for the current scenario
+    # scenario_segment_mask = np.isin(segment_section_ids, section_ids)
+    # Numba doesn't support np.isin
+    # This is a bit of a hack, but should be pretty performant
+    # as section_ids is a small array (<100)
+    scenario_segment_mask = np.zeros(segment_section_ids.shape, dtype=np.bool_)
+    for id in section_ids:
+        scenario_segment_mask |= segment_section_ids == id
+
     # Get scenario data
-    scenario_segment_mask = np.isin(segment_section_ids, section_ids)
+    segment_section_ids = segment_section_ids[scenario_segment_mask]
     trace_points = segment_nztm_coords[::2, :2, scenario_segment_mask]
-    segment_strike_vecs = segment_strike_vec[:, scenario_segment_mask]
+    segment_strike_vec = segment_strike_vec[:, scenario_segment_mask]
     segment_trace_length = segment_trace_length[scenario_segment_mask]
     segment_rx = segment_rx[scenario_segment_mask].copy()
     segment_ry = segment_ry[scenario_segment_mask].copy()
     segment_origins = segment_ry_origin[:, scenario_segment_mask].copy()
 
-    # Ignore anything outside of distance boundaries
+    # Compute Rjb and Rrup
     rjb = np.min(segment_rjb[scenario_segment_mask])
-    if rjb > 500:
-        return None, None
+    rrup = np.min(segment_rrup[scenario_segment_mask])
 
     # Compute scenario strike
     (
@@ -865,8 +713,8 @@ def compute_scenario_rx_ry(
         scenario_origin,
         section_strike_flip_mask,
         segment_strike_flip_mask,
-    ) = compute_scenario_strike(
-        trace_points, segment_strike_vecs, segment_trace_length, segment_section_ids
+    ) = source.compute_scenario_strike(
+        trace_points, segment_strike_vec, segment_trace_length, segment_section_ids
     )
 
     # Change sign of the Rx values corresponding to the segments
@@ -882,15 +730,15 @@ def compute_scenario_rx_ry(
     T = np.average(segment_rx, weights=segment_weights)
 
     # If any of the segment T values are zero, set scenario T to zero
-    if np.any(m := segment_rx == 0):
-        T[m] = 0
+    if np.any(segment_rx == 0.0):
+        T = 0.0
 
     ### Compute U
     ## Update the segment origins for segments with flipped strike
     segment_origins[:, segment_strike_flip_mask] = (
         segment_origins[:, segment_strike_flip_mask]
         + segment_trace_length[segment_strike_flip_mask]
-        * segment_strike_vecs[:, segment_strike_flip_mask]
+        * segment_strike_vec[:, segment_strike_flip_mask]
         * 1e3
     )
 
@@ -903,8 +751,16 @@ def compute_scenario_rx_ry(
     # based on distance from origin along
     # nominal strike
     # (segment origin - scenario_origin) . scenario_strike_vec
+    # segments_origin_strike_dist = (
+    #     np.einsum("ij, i->j", scenario_origin_segment_origin_vec, scenario_strike_vec)
+    #     / 1e3
+    # )
+    # Numba doesn't support einsum
     segments_origin_strike_dist = (
-        np.einsum("ij, i->j", scenario_origin_segment_origin_vec, scenario_strike_vec)
+        np.sum(
+            scenario_origin_segment_origin_vec * scenario_strike_vec[:, np.newaxis],
+            axis=0,
+        )
         / 1e3
     )
 
@@ -915,7 +771,7 @@ def compute_scenario_rx_ry(
     for cur_section_id in section_ids:
         # Get the segments for the current section and
         # sort these based on distance from the origin
-        section_mask = segment_section_ids[scenario_segment_mask] == cur_section_id
+        section_mask = segment_section_ids == cur_section_id
         sort_ind = segments_origin_strike_dist[section_mask].argsort()
 
         # Compute the origin shift for this section
@@ -926,7 +782,7 @@ def compute_scenario_rx_ry(
         # Compute the shift for each segment in this section
         segments_origin_shift[section_mask] = cur_section_origin_shift + np.concatenate(
             (
-                [0],
+                np.asarray([0]),
                 np.cumsum(segment_trace_length[section_mask][sort_ind][:-1]),
             )
         )
@@ -948,4 +804,69 @@ def compute_scenario_rx_ry(
         segment_ry + segments_origin_shift,
         weights=segment_weights,
     )
-    return T, U
+    return rjb, rrup, T, U
+
+
+@nb.njit(
+    nb.types.UniTuple(nb.float64[:], 4)(
+        nb.int64[:],
+        nb.types.ListType(nb.int64[::1]),
+        nb.float64[:, :, :],
+        nb.float64[:, :],
+        nb.float64[:],
+        nb.int64[:],
+        nb.float64[:],
+        nb.float64[:],
+        nb.float64[:],
+        nb.float64[:],
+        nb.float64[:, :],
+    ),
+    parallel=True,
+)
+def compute_scenario_distances(
+    scenario_ids: np.ndarray,
+    scenario_section_ids: List[np.ndarray],
+    segment_nztm_coords: np.ndarray,
+    segment_strike_vec: np.ndarray,
+    segment_trace_length: np.ndarray,
+    segment_section_ids: np.ndarray,
+    segment_rjb: np.ndarray,
+    segment_rrup: np.ndarray,
+    segment_rx: np.ndarray,
+    segment_ry: np.ndarray,
+    segment_ry_origin: np.ndarray,
+):
+    """
+    Computes the Rjb, Rrup, Rx, and Ry distance
+    for each scenario. For full details off the arguments
+    see compute_single_scenario_distances
+    """
+    # Create the result arrays
+    scenario_rjb = np.full(scenario_ids.shape, fill_value=np.nan)
+    scenario_rrup = np.full(scenario_ids.shape, fill_value=np.nan)
+    scenario_Rx = np.full(scenario_ids.shape, fill_value=np.nan)
+    scenario_Ry = np.full(scenario_ids.shape, fill_value=np.nan)
+
+    for i in nb.prange(scenario_ids.size):
+        # Compute scenario distances
+        rjb, rrup, T, U = compute_single_scenario_distances(
+            scenario_section_ids[i],
+            segment_nztm_coords,
+            segment_strike_vec,
+            segment_trace_length,
+            segment_section_ids,
+            segment_rjb,
+            segment_rrup,
+            segment_rx,
+            segment_ry,
+            segment_ry_origin,
+        )
+
+        # Store scenario distances
+        if rjb is not None:
+            scenario_rjb[i] = rjb
+            scenario_rrup[i] = rrup
+            scenario_Rx[i] = T
+            scenario_Ry[i] = U
+
+    return scenario_rjb, scenario_rrup, scenario_Rx, scenario_Ry

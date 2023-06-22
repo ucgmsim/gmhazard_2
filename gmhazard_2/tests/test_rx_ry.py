@@ -13,7 +13,6 @@ import pytest
 class TestRxRy_OQ:
     """Test Rx and Ry calculation by comparing against the results from OQ"""
 
-
     @pytest.fixture(scope="session")
     def rupture_db_ffp(self):
         return Path(__file__).parent / "resources" / "source_db.hdf5"
@@ -22,11 +21,24 @@ class TestRxRy_OQ:
     def source_definitions_dir(self):
         return Path(__file__).parent / "resources" / "source_definitions"
 
-
-    @pytest.mark.parametrize("scenario_id", [2000001, 2000002, 2000003, 2000004,
-                                             2000005, 2000006, 2000007, 2000008, 2000009,
-                                             2000010])
-    def test_one(self, scenario_id: int, rupture_db_ffp: Path, source_definitions_dir: Path):
+    @pytest.mark.parametrize(
+        "scenario_id",
+        [
+            23000001,
+            23000002,
+            23000003,
+            23000004,
+            23000005,
+            23000006,
+            23000007,
+            23000008,
+            23000009,
+            23000010,
+        ],
+    )
+    def test_one(
+        self, scenario_id: int, rupture_db_ffp: Path, source_definitions_dir: Path
+    ):
         # Load data
         with dbs.SourceModelDB(rupture_db_ffp) as db:
             source_set_info = db.get_source_set_info()
@@ -86,6 +98,7 @@ class TestRxRy_OQ:
 
         assert np.allclose(scenario_Rx, bench_rx)
         assert np.allclose(scenario_Ry, bench_ry)
+
 
 if __name__ == "__main__":
     TestRxRy_OQ().test_one()

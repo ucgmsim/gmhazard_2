@@ -1,10 +1,15 @@
+import json
 from pathlib import Path
 
 import pandas as pd
 import numpy as np
+import geojson
+from turfpy.measurement import points_within_polygon
 
-from gmhazard_2 import dbs
-from gmhazard_2 import distance
+
+from . import dbs
+from . import distance
+from . import source
 from qcore.geo import ll_bearing
 
 from openquake.hazardlib import nrml, sourceconverter
@@ -94,7 +99,7 @@ def compute_mesh_distances(
         )
         / 1e3
     )
-    segment_strike, segment_strike_vec = distance.compute_segment_strike_nztm(
+    segment_strike, segment_strike_vec = source.compute_segment_strike_nztm(
         segment_nztm_coords
     )
 
@@ -144,13 +149,20 @@ def compute_mesh_distances(
             scenario_Rjb[i, j] = segment_rjb.min()
 
             # Compute Rx and Ry for each rupture scenario
-            cur_T, cur_U = distance.compute_scenario_rx_ry(
+            cur_scenario_segment_mask = np.isin(segment_section_ids, section_ids)
+            (
+                cur_rjb,
+                cur_rrup,
+                cur_T,
+                cur_U,
+            ) = distance.compute_single_scenario_distances(
                 section_ids,
                 segment_nztm_coords,
                 segment_strike_vec,
                 segment_trace_length,
                 segment_section_ids,
                 segment_rjb,
+                segment_rrup,
                 segment_rx,
                 segment_ry,
                 segment_ry_origin,
@@ -216,3 +228,35 @@ def create_OQ_lines(
         )
 
     return lines
+
+
+def get_backarc_mask(backarc_json_ffp: Path, locs: np.ndarray):
+    """
+    Computes a mask identifying each location
+    that requires the backarc flag based on
+    wether it is inside the backarc polygon or not
+
+    locs: array of floats
+        [lon, lat]
+    """
+    # Determine if backarc needs to be enabled for each loc
+    points = geojson.FeatureCollection(
+        [
+            geojson.Feature(geometry=geojson.Point(tuple(cur_loc[::-1]), id=ix))
+            for ix, cur_loc in enumerate(locs)
+        ]
+    )
+    with backarc_json_ffp.open("r") as f:
+        poly_coords = np.flip(json.load(f)["geometry"]["coordinates"][0], axis=1)
+
+    polygon = geojson.Polygon([poly_coords.tolist()])
+    backarc_ind = (
+        [
+            cur_point["geometry"]["id"]
+            for cur_point in points_within_polygon(points, polygon)["features"]
+        ],
+    )
+    backarc_mask = np.zeros(shape=locs.shape[0], dtype=bool)
+    backarc_mask[backarc_ind] = True
+
+    return backarc_mask

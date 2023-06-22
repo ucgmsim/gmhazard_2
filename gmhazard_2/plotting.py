@@ -134,8 +134,6 @@ def create_scenario_plots(
     Creates GMT based plots for the different
     rupture scenarios
 
-    TODO: Update this to use the custom source DB
-
     Parameters
     ----------
     rupture_dir: Path
@@ -171,7 +169,7 @@ def create_scenario_plots(
 
     rupture_ind = np.asarray(
         [
-            np.asarray(cur_ind.decode().split(" ")).astype(float)
+            cur_ind.decode().split(" ")
             for cur_ind in rupture_ind
         ],
         dtype=object,
@@ -226,7 +224,7 @@ def create_scenario_plots(
             region=cur_region,
             map_data=plot_data,
         )
-        plot_sections(fig, cur_sections, plot_labels=True)
+        plot_sections(fig, cur_sections)
         figs.append(fig)
 
         if output_dir is not None:
@@ -241,6 +239,7 @@ def plot_sections(
     for j, (id, coords) in enumerate(sections.items()):
         print(f"\tProcessing section {j}/{len(sections)}")
         for i in range(0, coords.shape[0], 2):
+            # Draw the down dip lines
             fig.plot(x=coords[[i, i + 1], 0], y=coords[[i, i + 1], 1], pen="0.2p,red")
 
             if plot_labels:
@@ -275,9 +274,11 @@ def plot_sections(
                 )
 
             if i <= (coords.shape[0] - 4):
+                # Fault trace
                 fig.plot(
-                    x=coords[[i, i + 2], 0], y=coords[[i, i + 2], 1], pen="0.2p,red"
+                    x=coords[[i, i + 2], 0], y=coords[[i, i + 2], 1], pen="0.8p,red"
                 )
+                # Bottom trace
                 fig.plot(
                     x=coords[[i + 1, i + 3], 0],
                     y=coords[[i + 1, i + 3], 1],
