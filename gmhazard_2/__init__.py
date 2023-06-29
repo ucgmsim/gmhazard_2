@@ -5,4 +5,6 @@ from . import source_model
 from . import gmm_logic_tree
 from . import constants
 from . import source
+from . import im
+from . import hazard
 from .tests import test_utils

@@ -43,6 +43,7 @@ class GMMBranch:
         self.weight = weight
 
         self.gmm_params = gmm_params
+        self.run_config = GMMRunConfig.from_branch(self)
 
 
 class GMMRunConfig(NamedTuple):
@@ -149,12 +150,6 @@ def parse_nshm_gmm_lt(gmm_lt_ffp: Path):
     Parses the NSHM GMM LT definition xml
     file into a GMMLogicTree object
     """
-    TECT_TYPE_MAPPING = {
-        "Active Shallow Crust": constants.TectonicType.active_shallow,
-        "Subduction Interface": constants.TectonicType.subduction_interface,
-        "Subduction Intraslab": constants.TectonicType.subduction_slab,
-    }
-
     GMM_MAPPING = {
         # Active Shallow Crust
         "Stafford2022": GMM.S_22,
@@ -212,7 +207,7 @@ def parse_nshm_gmm_lt(gmm_lt_ffp: Path):
                 gmm_params=gmm_params if len(gmm_params) > 0 else None,
             )
 
-        cur_tec_type = TECT_TYPE_MAPPING[cur_tec_lt["@applyToTectonicRegionType"]]
+        cur_tec_type = constants.TECT_TYPE_MAPPING[cur_tec_lt["@applyToTectonicRegionType"]]
         tec_type_lts[cur_tec_type] = GMMLogicTree(
             cur_tec_type.name, cur_branches, GMMLogicTreeType.GMM
         )

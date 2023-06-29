@@ -10,6 +10,7 @@ import numpy as np
 
 
 from . import dbs
+from . import constants
 
 
 class SMLogicTreeBranch:
@@ -124,7 +125,6 @@ def get_tectonic_type(rupture_ffp: Path):
         txt = f.read()
 
     matches = re.findall(r'tectonicRegion="(.*)"', txt)
-
     assert len(matches) == 1
 
-    return matches[0]
+    return constants.TECT_TYPE_MAPPING[matches[0]].value

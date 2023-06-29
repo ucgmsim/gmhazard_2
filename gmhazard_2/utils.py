@@ -254,3 +254,4 @@ def get_backarc_mask(backarc_json_ffp: Path, locs: np.ndarray):
     backarc_mask[backarc_ind] = True
 
     return backarc_mask
+

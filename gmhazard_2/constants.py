@@ -6,6 +6,13 @@ class TectonicType(Enum):
     subduction_interface = "subduction_interface"
     subduction_slab = "subduction_slab"
 
+TECT_TYPE_MAPPING = {
+    "Active Shallow Crust": TectonicType.active_shallow,
+    "Subduction Interface": TectonicType.subduction_interface,
+    "Subduction Intraslab": TectonicType.subduction_slab,
+}
+
+
 SA_PERIODS = [
     0.01,
     0.02,
