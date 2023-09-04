@@ -12,7 +12,26 @@ def get_scenario_source_props(
     segment_nztm_coords: np.ndarray,
     segment_section_ids: np.ndarray,
 ):
-    """Computes the scenario source properties"""
+    """
+    Computes the scenario source properties
+
+    Parameters
+    ----------
+    rupture_scenarios_df: dataframe
+        Rupture scenarios dataframe
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+    segment_section_ids: array of ints
+        shape: [n_segments]
+        Section ID for each segment
+
+    Returns
+    -------
+    dataframe
+        Scenario source properties dataframe
+    """
     # Compute segment and section properties
     (
         section_ids,
@@ -88,6 +107,19 @@ def compute_segment_dip(segment_nztm_coords: np.ndarray):
     """
     Compute the average segment dip
     based on the two endpoints of the segment
+
+    Parameters
+    ----------
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+
+    Returns
+    -------
+    array of floats
+        The dip of each segment
+        Shape: [n_segments]
     """
     # Compute the opposite
     o1 = segment_nztm_coords[1, 2, :] - segment_nztm_coords[0, 2, :]
@@ -109,7 +141,22 @@ def compute_segment_dip(segment_nztm_coords: np.ndarray):
 
 
 def compute_segment_ztor(segment_nztm_coords: np.ndarray):
-    """Computes top-edge depth for each segment (i.e. ZTor)"""
+    """
+    Computes top-edge depth for each segment (i.e. ZTor) in km
+
+    Parameters
+    ----------
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+
+    Returns
+    -------
+    array of floats
+        The top-edge depth of each segment
+        Shape: [n_segments]
+    """
     return np.mean(segment_nztm_coords[::2, 2, :], axis=0) / 1e3
 
 
@@ -121,6 +168,18 @@ def compute_segment_zdepth(segment_nztm_coords: np.ndarray):
 
     Segment down-dip with is just computed as the average
     of the down-dip width at the two endpoints
+
+    Parameters
+    ----------
+    segment_nztm_coords: array of floats
+        Coordinates of the segment corner points in NZTM
+        where points 0 and 2 define the fault trace
+        shape: [4, 3, n_segments]
+
+    Returns
+    -------
+    array of floats
+        The hypocentre depth of each segment in km
     """
     w1 = np.linalg.norm(
         segment_nztm_coords[0, :, :] - segment_nztm_coords[1, :, :], axis=0
@@ -153,8 +212,33 @@ def compute_section_source_props(
     segment_section_ids: np.ndarray,
 ):
     """
-    Compute the section area, which is just the
-    sum of the segment areas
+    Compute the source properties for each section
+
+    Parameters
+    ----------
+    segment_area: array of floats
+        The area of each segment
+    segment_dip: array of floats
+        The dip of each segment
+    segment_ztor: array of floats
+        The top-edge depth of each segment
+    segment_zdepth: array of floats
+        The hypocentre depth of each segment
+    segment_section_ids: array of ints
+        The section ID of each segment
+
+    Returns
+    -------
+    section_ids: array of ints
+        The section ID of each section
+    section_area: array of floats
+        The area of each section
+    section_dip: array of floats
+        The dip of each section
+    section_ztor: array of floats
+        The top-edge depth of each section
+    section_zdepth: array of floats
+        The hypocentre depth of each section
     """
     # Sanity check
     assert np.all(np.sort(segment_section_ids) == segment_section_ids)
@@ -196,7 +280,31 @@ def compute_scenario_source_props(
     scenario_section_ids: List[np.ndarray],
 ):
     """
-    Compute the area, dip, Ztor and Zdepth for each scenario
+    Compute the source properties for each section
+
+    Parameters
+    ----------
+    section_ids: array of ints
+        The section ID of each section
+    section_area: array of floats
+        The area of each section
+    section_dip: array of floats
+        The dip of each section
+    section_ztor: array of floats
+        The top-edge depth of each section
+    section_zdepth: array of floats
+        The hypocentre depth of each section
+    scenario_section_ids: list of arrays of ints
+        The section IDs of each scenario
+
+    Returns
+    -------
+    scenario_dip: array of floats
+        The dip of each scenario
+    scenario_ztor: array of floats
+        The top-edge depth of each scenario
+    scenario_zdepth: array of floats
+        The hypocentre depth of each scenario
     """
     # Sanity check
     assert section_ids.size == np.unique(section_ids).size
